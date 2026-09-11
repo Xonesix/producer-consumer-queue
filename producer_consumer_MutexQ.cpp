@@ -47,7 +47,8 @@ public:
 int main()
 {
     shared_ptr<tSafeQ> tec(new tSafeQ());
-    vector<thread> ts = {};
+    vector<thread> producers = {};
+    vector<thread> consumers = {};
 
     // use atomic array to keep track, print all vals |at end
     std::array<std::atomic<int>, 10> atomic_array{};
@@ -58,22 +59,41 @@ int main()
 
     });
 
-    auto consume = ([tec](){
-        cout << "Popped: " << *tec->pop() << endl;
+    auto consume = ([tec, &atomic_array](){
         // need a way to write what we have consumed || time doesn't matter so an atomic way to measure this would be great
-        // 
+        // atomic add to tarray
+        atomic_array[*tec->pop()]++;
     });
     for (int i = 0; i < 10; i++)
     {
             // unambiguously produces 0-9
             thread t(produce, i);
-            ts.push_back(std::move(t));
+            producers.push_back(std::move(t));
     }
 
-    for (thread& t: ts)
+    for (int i = 0; i < 10; i++)
+    {
+        thread t(consume);
+        consumers.push_back(std::move(t));
+    }
+
+
+    for (thread& t: producers)
     {
         t.join();
     }
+    for (thread &t: consumers)
+    {
+        t.join();
+    }
+
+    // print out produced vals
+    // 
+    for (auto &elem: atomic_array)
+    {
+        cout << elem << " ";
+    }
+    cout << endl;
 
     return 0;
 }
