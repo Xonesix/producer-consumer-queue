@@ -2,6 +2,8 @@
 //
 
 
+#include <array>
+#include <atomic>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -47,6 +49,10 @@ int main()
     shared_ptr<tSafeQ> tec(new tSafeQ());
     vector<thread> ts = {};
 
+    // use atomic array to keep track, print all vals |at end
+    std::array<std::atomic<int>, 10> atomic_array{};
+
+
     auto produce = ([tec](int x){
         tec->push(x);
 
@@ -54,22 +60,14 @@ int main()
 
     auto consume = ([tec](){
         cout << "Popped: " << *tec->pop() << endl;
+        // need a way to write what we have consumed || time doesn't matter so an atomic way to measure this would be great
+        // 
     });
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < 10; i++)
     {
-        if (i % 2 == 0)
-        {
-            //produce
+            // unambiguously produces 0-9
             thread t(produce, i);
             ts.push_back(std::move(t));
-        }
-
-        else
-        {
-            // consume
-            thread t(consume);
-            ts.push_back(std::move(t));
-        }
     }
 
     for (thread& t: ts)
