@@ -16,6 +16,7 @@ struct tSafeQ {
 private:
     vector<int> base_queue;
     mutex m;
+    condition_variable emptyQ;
 public:
 
     tSafeQ()
@@ -27,18 +28,20 @@ public:
     {
         lock_guard<mutex> g(m);
         base_queue.push_back(std::move(num)); // we don't want to copy the value all the time
+        emptyQ.notify_one();
     }
 
     shared_ptr<int> pop()
     {
 
-        lock_guard<mutex> g(m);
-        if (base_queue.empty())
-        {
-            return nullptr;
-        }
+        unique_lock<mutex> lk(m);
+        // when there is somethign worth processing, perform task
+        emptyQ.wait(lk, [this](){return !base_queue.empty();});
+        
+
         const shared_ptr<int> res(make_shared<int>(base_queue.back())); // what does the const mean? i think you can't mutate it
         base_queue.pop_back();
+        lk.unlock();
         return res;
 
     }
@@ -62,7 +65,16 @@ int main()
     auto consume = ([tec, &atomic_array](){
         // need a way to write what we have consumed || time doesn't matter so an atomic way to measure this would be great
         // atomic add to tarray
-        atomic_array[*tec->pop()]++;
+        auto x = tec->pop();
+        if (x == nullptr)
+        {
+            // perhaps wait? notify using condition variable
+            return;
+        }
+        // what if another thread
+        else {
+            atomic_array[*x]++;
+        }
     });
     for (int i = 0; i < 10; i++)
     {
@@ -71,6 +83,8 @@ int main()
             producers.push_back(std::move(t));
     }
 
+
+    // What happens when a consume
     for (int i = 0; i < 10; i++)
     {
         thread t(consume);
@@ -88,7 +102,7 @@ int main()
     }
 
     // print out produced vals
-    // 
+    //
     for (auto &elem: atomic_array)
     {
         cout << elem << " ";
@@ -97,3 +111,19 @@ int main()
 
     return 0;
 }
+
+
+// the issue currently,
+/*
+ *
+ * 1 1 1 1 1 1 1 1 1 1
+ (base) PS C:\Working\CPP_Projects\Producer_Consumer_Q> .\main.exe
+ 1 1 1 1 1 1 0 1 1 1
+ (base) PS C:\Working\CPP_Projects\Producer_Consumer_Q> .\main.exe
+ 1 1 1 1 1 1 1 1 1 1
+ *
+ * One of the values is getting lost || we know guaranteed that all values will be produced 0-9
+ * 
+ * Hypothesis: one consumer gets scheduled before a producer is able to push a value: || consumer gets nullptr as q is empty | thread then returns and dies
+ * 
+ */
