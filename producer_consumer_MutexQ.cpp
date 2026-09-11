@@ -20,7 +20,7 @@ public:
     {
         base_queue = {};
     }
-    
+
     void push(int num)
     {
         lock_guard<mutex> g(m);
@@ -29,7 +29,7 @@ public:
 
     shared_ptr<int> pop()
     {
-        
+
         lock_guard<mutex> g(m);
         if (base_queue.empty())
         {
@@ -38,7 +38,7 @@ public:
         const shared_ptr<int> res(make_shared<int>(base_queue.back())); // what does the const mean? i think you can't mutate it
         base_queue.pop_back();
         return res;
-        
+
     }
 };
 
@@ -49,7 +49,7 @@ int main()
 
     auto produce = ([tec](int x){
         tec->push(x);
-        
+
     });
 
     auto consume = ([tec](){
@@ -64,7 +64,7 @@ int main()
             ts.push_back(std::move(t));
         }
 
-        else 
+        else
         {
             // consume
             thread t(consume);
@@ -76,6 +76,6 @@ int main()
     {
         t.join();
     }
-    
+
     return 0;
 }
