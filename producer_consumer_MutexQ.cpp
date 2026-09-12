@@ -4,8 +4,11 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <deque>
 #include <iostream>
 #include <memory>
+#include <ratio>
 #include <thread>
 #include <vector>
 #include <mutex>
@@ -14,7 +17,7 @@ using namespace std;
 // one option use mutex to push and pull (problem: kills concurrency, essentially sequential code)
 struct tSafeQ {
 private:
-    vector<int> base_queue;
+    deque<int> base_queue;
     mutex m;
     condition_variable emptyQ;
 public:
@@ -31,18 +34,17 @@ public:
         emptyQ.notify_one();
     }
 
-    shared_ptr<int> pop()
+    pair<int, std::chrono::time_point<std::chrono::system_clock>> pop()
     {
 
         unique_lock<mutex> lk(m);
         // when there is somethign worth processing, perform task
         emptyQ.wait(lk, [this](){return !base_queue.empty();});
-        
 
-        const shared_ptr<int> res(make_shared<int>(base_queue.back())); // what does the const mean? i think you can't mutate it
-        base_queue.pop_back();
-        lk.unlock();
-        return res;
+
+        int res = (base_queue.front()); // what does the const mean? i think you can't mutate it
+        base_queue.pop_front();
+        return {res, chrono::system_clock::now()};
 
     }
 };
@@ -54,27 +56,24 @@ int main()
     vector<thread> consumers = {};
 
     // use atomic array to keep track, print all vals |at end
-    std::array<std::atomic<int>, 10> atomic_array{};
+    std::array<std::atomic<double>, 10> atomic_array{};
 
+    auto tp = chrono::system_clock::now();
 
     auto produce = ([tec](int x){
         tec->push(x);
 
     });
 
-    auto consume = ([tec, &atomic_array](){
+    auto consume = ([tp, tec, &atomic_array](){
         // need a way to write what we have consumed || time doesn't matter so an atomic way to measure this would be great
         // atomic add to tarray
         auto x = tec->pop();
-        if (x == nullptr)
-        {
-            // perhaps wait? notify using condition variable
-            return;
-        }
         // what if another thread
-        else {
-            atomic_array[*x]++;
-        }
+
+        atomic_array[x.first] = chrono::duration_cast<chrono::duration<double, std::milli>>(x.second-tp).count();
+
+
     });
     for (int i = 0; i < 10; i++)
     {
@@ -111,19 +110,3 @@ int main()
 
     return 0;
 }
-
-
-// the issue currently,
-/*
- *
- * 1 1 1 1 1 1 1 1 1 1
- (base) PS C:\Working\CPP_Projects\Producer_Consumer_Q> .\main.exe
- 1 1 1 1 1 1 0 1 1 1
- (base) PS C:\Working\CPP_Projects\Producer_Consumer_Q> .\main.exe
- 1 1 1 1 1 1 1 1 1 1
- *
- * One of the values is getting lost || we know guaranteed that all values will be produced 0-9
- * 
- * Hypothesis: one consumer gets scheduled before a producer is able to push a value: || consumer gets nullptr as q is empty | thread then returns and dies
- * 
- */
