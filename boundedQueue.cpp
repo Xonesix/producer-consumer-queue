@@ -14,23 +14,36 @@
 #include <mutex>
 #include <memory>
 using namespace std;
-// one option use mutex to push and pull (problem: kills concurrency, essentially sequential code)
+// similar except there will be a waiting limit for threads to push
 struct tSafeQ {
 private:
+    int capacity;
+
     deque<int> base_queue;
     mutex m;
     condition_variable emptyQ;
+    condition_variable fullQ;
 public:
-
+    // capacity is how many meany threads can be max Available
+    // We need to notify producers when somehting is free
     tSafeQ()
     {
         base_queue = {};
+        capacity = 1;
+
     }
 
     void push(int num)
+    // if a thread is already pushing
     {
-        lock_guard<mutex> g(m);
-        base_queue.push_back(std::move(num)); // we don't want to copy the value all the time
+        // how to know if a thread is waiting
+
+        unique_lock<mutex> lk(m);
+
+        // if capacity overload, we will have to wait
+        fullQ.wait(lk, [this](){return base_queue.size() < capacity;});
+        // other wise push
+        base_queue.push_back(std::move(num));
         emptyQ.notify_one();
     }
 
@@ -44,6 +57,7 @@ public:
 
         int res = (base_queue.front()); // what does the const mean? i think you can't mutate it
         base_queue.pop_front();
+        fullQ.notify_one();
         return {res, chrono::system_clock::now()};
 
     }
@@ -101,13 +115,13 @@ int main()
     }
 
     // print out produced vals
-    //
+
     for (auto &elem: atomic_array)
     {
         cout << elem << " ";
     }
     cout << endl;
-    cout << "TOTAL TIME FOR PROGRAM:   ===>   " << chrono::duration_cast<chrono::duration<double, std::milli>>(chrono::system_clock::now()-tp).count() << endl;
 
+    cout << "TOTAL TIME FOR PROGRAM:   ===>   " << chrono::duration_cast<chrono::duration<double, std::milli>>(chrono::system_clock::now()-tp).count() << endl;
     return 0;
 }
