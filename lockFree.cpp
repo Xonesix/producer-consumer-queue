@@ -56,7 +56,7 @@ class lock_free_queue
                 return shared_ptr<int>();
             }
             shared_ptr<int> const res(old_head->data);
-            delete old_head;
+            delete old_head; // both threads will try to delete this node || threads have race condition again
             return res;
         }
 
@@ -67,7 +67,7 @@ class lock_free_queue
             node* const old_tail = tail.load();
             // what if another thread comes in before this? And this thread is sleeping!
             old_tail->data.swap(new_data);
-            old_tail->next=p;
+            old_tail->next=p; // this would be a data race || if the thread is running concurrently
             tail.store(p);
         }
 
