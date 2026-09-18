@@ -162,6 +162,23 @@ class lock_free_queue
         }
 };
 
+int main() {
+    lock_free_queue q;
+    q.push(1);
+    q.push(2);
+    q.push(3);
+
+    auto a = q.pop();
+    auto b = q.pop();
+    auto c = q.pop();
+    auto d = q.pop();
+
+    std::cout << (a ? *a : -1) << " "
+              << (b ? *b : -1) << " "
+              << (c ? *c : -1) << " "
+              << (d ? -999 : -1) << std::endl;
+    return 0;
+}
 /*
  * Well what if we had dummy nodes betweeb real nodes, so when multiple threads try to change tail nodes, they oly need to update the tail node?
  * Or we could make data ptr atomic, if call succeeds that'we claim that node and add a tail.
