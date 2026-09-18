@@ -7,8 +7,6 @@
 #include <ratio>
 #include <thread>
 #include <vector>
-#include <mutex>
-#include <memory>
 using namespace std;
 
 class lock_free_queue
@@ -16,8 +14,8 @@ class lock_free_queue
     private:
         struct node;
 
-        // Using splti reference technique, we'll bundle counts in 1 struct to make count and claims atomic
-        struct counted_node_ptr 
+        // Using split reference technique, we'll bundle counts in 1 struct to make count and claims atomic
+        struct counted_node_ptr
         {
             int external_count;
             node* ptr;
@@ -31,44 +29,87 @@ class lock_free_queue
             unsigned external_counters:2;
         };
 
-        struct node 
+        struct node
         {
-            std::atomic<int> data;
+            std::atomic<int*> data;
             atomic<node_counter> count;
-            counted_node_ptr next;
+            atomic<counted_node_ptr> next;
+
             node()
             {
                 node_counter new_count;
                 new_count.internal_count = 0;
-                new_count.external_counters = 2;
+                new_count.external_counters = 2; // head and tail both start out referencing this node
                 count.store(new_count);
-                next.ptr=nullptr;
-                next.external_count=0;
+
+                counted_node_ptr next_val;
+                next_val.ptr = nullptr;
+                next_val.external_count = 0;
+                next.store(next_val);
+
+                data.store(nullptr);
+            }
+
+            void release_ref()
+            {
+                node_counter old_counter=count.load(std::memory_order_relaxed);
+                node_counter new_counter;
+                do {
+                    new_counter = old_counter;
+                    --new_counter.internal_count;
+                } while (!count.compare_exchange_strong(old_counter, new_counter, std::memory_order_acquire, std::memory_order_relaxed));
+                // only delete once BOTH internal and external counts have hit zero -
+                // otherwise some other thread still has a live claim on this node
+                if(!new_counter.internal_count && !new_counter.external_counters)
+                {
+                    delete this;
+                }
             }
         };
 
-        
-        node* pop_head()
+        static void increase_external_count(
+            atomic<counted_node_ptr>& counter, counted_node_ptr& old_counter)
         {
-            node* const old_head=head.load();
-
-            if (old_head == tail.load()) // if the head and tail are same, then no more nodes, hence nullptr
-                return nullptr;
-            head.store(old_head->next);
-            return old_head;
+            counted_node_ptr new_counter;
+            do
+            {
+                new_counter=old_counter;
+                ++new_counter.external_count;
+            } while(!counter.compare_exchange_strong(old_counter, new_counter, std::memory_order_acquire, std::memory_order_relaxed));
+            old_counter.external_count=new_counter.external_count; // obtain reference and try to increase the head count
         }
-        // loading atomically into here
+
+        static void free_external_counter(counted_node_ptr &old_node_ptr)
+        {
+            node* const ptr = old_node_ptr.ptr;
+            int const count_increase=old_node_ptr.external_count-2;
+            node_counter old_counter=ptr->count.load(std::memory_order_relaxed);
+            node_counter new_counter;
+            do {
+                new_counter = old_counter;
+                --new_counter.external_counters;
+                new_counter.internal_count+=count_increase;
+            } while (!ptr->count.compare_exchange_strong(old_counter, new_counter, std::memory_order_acquire, std::memory_order_relaxed));
+            if (!new_counter.internal_count && !new_counter.external_counters)
+                delete ptr;
+        }
+
     public:
-        lock_free_queue():
-            head(new node), tail(head.load())
-        {}
+        lock_free_queue()
+        {
+            counted_node_ptr initial;
+            initial.ptr = new node;
+            initial.external_count = 1; // one reference from head, one from tail
+            head.store(initial);
+            tail.store(initial);
+        }
 
         ~lock_free_queue()
         {
-            // while head.load() is not nullptr (alias old_head) remove node
-            while(node* const old_head=head.load())
+            // while head is not nullptr (alias old_head) remove node
+            while(node* const old_head=head.load().ptr)
             {
-                head.store(old_head->next);
+                head.store(old_head->next.load());
                 delete old_head;
             }
         }
@@ -78,15 +119,17 @@ class lock_free_queue
             counted_node_ptr old_head = head.load(std::memory_order_relaxed); // load old head before looping
             for(;;)
             {
-                node* const ptr = old_head.ptr; // increase count of loaded val
-                if (ptr == tail.load().ptr) // if head == tail Release and return null because q is empty
+                increase_external_count(head, old_head); // claim a reference BEFORE touching the node - this was the missing piece
+                node* const ptr = old_head.ptr;
+                if (ptr == tail.load().ptr) // if head == tail, release and return null because q is empty
                 {
                     ptr->release_ref();
                     return unique_ptr<int>();
                 }
-                if(head.compare_exchange_strong(old_head,ptr->next)) // otherwise try to claim the data
+                counted_node_ptr next=ptr->next.load();
+                if(head.compare_exchange_strong(old_head, next)) // otherwise try to claim the data - use the 'next' we already loaded
                 {
-                    int const res=ptr->data.exchange(nullptr);
+                    int* const res=ptr->data.exchange(nullptr);
                     free_external_counter(old_head); // if claimed release external references | once released the node can be deleted
                     return unique_ptr<int>(res);
                 }
@@ -113,22 +156,17 @@ class lock_free_queue
                     free_external_counter(old_tail);
                     new_data.release();
                     break;
-                    
                 }
                 old_tail.ptr->release_ref();
             }
         }
-
-
-
-
 };
 
 /*
  * Well what if we had dummy nodes betweeb real nodes, so when multiple threads try to change tail nodes, they oly need to update the tail node?
- * Or we could make data ptr atomic, if call succeeds that'we claim that node and add a tail. 
- * 
- * 
+ * Or we could make data ptr atomic, if call succeeds that'we claim that node and add a tail.
+ *
+ *
  */
 
 // void example_push_in_stack() {
@@ -186,8 +224,8 @@ try_reclaim(node* old_head)
         temp = old_head
         hazard.store(old_head) Store hold head in hazarad | Now no thread can delete it while using it
         old_head = head.load() You can now load it
-        
+
     } while (old_head != temp) While to confirm assign happens || because if thread deletes it it will break
-    
-  
+
+
  */
