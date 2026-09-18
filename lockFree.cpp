@@ -14,15 +14,40 @@ using namespace std;
 class lock_free_queue
 {
     private:
-        struct node
-        {
-            shared_ptr<int> data;
-            node* next;
-            node():next(nullptr){}
-        };
-        std::atomic<node*> head;
-        std::atomic<node*> tail;
+        struct node;
 
+        // Using splti reference technique, we'll bundle counts in 1 struct to make count and claims atomic
+        struct counted_node_ptr 
+        {
+            int external_count;
+            node* ptr;
+        };
+        std::atomic<counted_node_ptr> head;
+        std::atomic<counted_node_ptr> tail;
+
+        struct node_counter
+        {
+            unsigned internal_count:30;
+            unsigned external_counters:2;
+        };
+
+        struct node 
+        {
+            std::atomic<int> data;
+            atomic<node_counter> count;
+            counted_node_ptr next;
+            node()
+            {
+                node_counter new_count;
+                new_count.internal_count = 0;
+                new_count.external_counters = 2;
+                count.store(new_count);
+                next.ptr=nullptr;
+                next.external_count=0;
+            }
+        };
+
+        
         node* pop_head()
         {
             node* const old_head=head.load();
@@ -48,27 +73,50 @@ class lock_free_queue
             }
         }
 
-        shared_ptr<int> pop()
+        unique_ptr<int> pop()
         {
-            node* old_head=pop_head();
-            if(!old_head)
+            counted_node_ptr old_head = head.load(std::memory_order_relaxed); // load old head before looping
+            for(;;)
             {
-                return shared_ptr<int>();
+                node* const ptr = old_head.ptr; // increase count of loaded val
+                if (ptr == tail.load().ptr) // if head == tail Release and return null because q is empty
+                {
+                    ptr->release_ref();
+                    return unique_ptr<int>();
+                }
+                if(head.compare_exchange_strong(old_head,ptr->next)) // otherwise try to claim the data
+                {
+                    int const res=ptr->data.exchange(nullptr);
+                    free_external_counter(old_head); // if claimed release external references | once released the node can be deleted
+                    return unique_ptr<int>(res);
+                }
+                ptr->release_ref(); // if CAS fails then release the reference ptr
             }
-            shared_ptr<int> const res(old_head->data);
-            delete old_head; // both threads will try to delete this node || threads have race condition again
-            return res;
         }
 
+        // Push revision
         void push(int newVal)
         {
-            shared_ptr<int> new_data(make_shared<int>(newVal));
-            node* p = new node;
-            node* const old_tail = tail.load();
-            // what if another thread comes in before this? And this thread is sleeping!
-            old_tail->data.swap(new_data);
-            old_tail->next=p; // this would be a data race || if the thread is running concurrently
-            tail.store(p);
+            unique_ptr<int> new_data(new int(newVal));
+            counted_node_ptr new_next;
+            new_next.ptr = new node;
+            new_next.external_count=1;
+            counted_node_ptr old_tail=tail.load();
+            for(;;)
+            {
+                increase_external_count(tail, old_tail);
+                int* old_data = nullptr;
+                if (old_tail.ptr->data.compare_exchange_strong(old_data, new_data.get()))
+                {
+                    old_tail.ptr->next=new_next;
+                    old_tail=tail.exchange(new_next);
+                    free_external_counter(old_tail);
+                    new_data.release();
+                    break;
+                    
+                }
+                old_tail.ptr->release_ref();
+            }
         }
 
 
@@ -76,6 +124,12 @@ class lock_free_queue
 
 };
 
+/*
+ * Well what if we had dummy nodes betweeb real nodes, so when multiple threads try to change tail nodes, they oly need to update the tail node?
+ * Or we could make data ptr atomic, if call succeeds that'we claim that node and add a tail. 
+ * 
+ * 
+ */
 
 // void example_push_in_stack() {
 //     node* const new_node = new node()
