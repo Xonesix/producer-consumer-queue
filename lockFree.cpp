@@ -75,3 +75,65 @@ class lock_free_queue
 
 
 };
+
+
+// void example_push_in_stack() {
+//     node* const new_node = new node()
+//     new_node->next = head.load();
+//     while (!head.compare_exchange_weak(new_node->next, new_node))
+// }
+
+
+// pop with compare exchange
+/*
+    node* old_head = head.load()
+    while(!head.compare_exchange_weak(old_head, old_head->next))
+    result = old_head->data; // result means this is a copy!! Which can throw an exception || then the thread leaves the node hanging VERY BAD || maybe pass in a smart ptr?
+    if you do shared ptr for result, the allocation for shared can throw as well!
+
+IF we allocate the data in push itself
+
+So data is shared_ptr!
+    struct node
+        shared_ptr node;
+
+        node(T const& data)
+            data(make_shared<T>(data_))
+
+Ok so we can try making a garbage colector || clean up when no threads are calling pop
+
+Use counter to count how many nodes
+
+atomic<int> threads_in_pop
+
+pop()
+...
+++threads in pop;
+old_head = head.load
+
+if oldhead
+    res.swap(old_head->data) to avoid exception
+try_reclaim(old_head)
+
+try_reclaim(node* old_head)
+    if threads_in_pop == 1
+    nodes_to_delete = to_be_deleted.exchange()
+
+    add a hazard pointer for pop
+
+    pop()
+    ...
+    std::atomic<void*>& hp=get_hp_currThread()
+
+
+    soo
+
+    do {
+        temp = old_head
+        hazard.store(old_head) Store hold head in hazarad | Now no thread can delete it while using it
+        old_head = head.load() You can now load it
+        
+    } while (old_head != temp) While to confirm assign happens || because if thread deletes it it will break
+    
+  
+ */
