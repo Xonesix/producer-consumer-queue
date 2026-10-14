@@ -1,0 +1,21 @@
+Queue benchmark - 2026-10-14 12:50:27
+Compiler: clang++ -std=c++20 -O2
+Runs per benchmark: 2000  (each run = 1,000,000 items; latency = TOTAL TIME per run)
+
+benchmark                                     p50 ms    p99 ms   mean ms    min ms    max ms  fails
+---------------------------------------------------------------------------------------------------
+lockFree (SPSC, hand-written)                  92.84    255.71    120.17     59.01    281.02      0
+boundedQueue (mutex+cv, cap 10k, 10/10)       239.63    296.47    242.05    197.66    306.92      0
+producer_consumer_MutexQ (10/10)              261.05    325.32    263.98    216.98    329.82      0
+MPMC_test (hazard-ptr MS queue, 10/10)        382.00    422.55    382.22    334.06    440.43      0
+MPMC_NotMine moodycamel SPSC (1/1)             27.75     36.44     28.66     25.20     72.59      0
+MPMC_NotMine moodycamel MPMC (10/10)           56.04     69.05     56.60     47.81     80.45      0
+
+fails = runs that exited non-zero or printed no TOTAL TIME (lockFree.cpp has no PASS/FAIL check).
+Wall time per benchmark:
+  lockFree (SPSC, hand-written)                  247 s
+  boundedQueue (mutex+cv, cap 10k, 10/10)        491 s
+  producer_consumer_MutexQ (10/10)               536 s
+  MPMC_test (hazard-ptr MS queue, 10/10)         773 s
+  MPMC_NotMine moodycamel SPSC (1/1)              65 s
+  MPMC_NotMine moodycamel MPMC (10/10)           121 s
